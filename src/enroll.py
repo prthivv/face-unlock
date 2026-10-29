@@ -2,11 +2,9 @@ import os
 import cv2
 import torch
 import numpy as np
-from PIL import Image
-from facenet_pytorch import MTCNN
 
 from models.backbone import Backbone
-from data.dataset import get_transforms
+from face_utils import get_face_tensor
 
 
 def enroll():
@@ -17,9 +15,6 @@ def enroll():
     model.load_state_dict(checkpoint['backbone'])
     model.eval()
 
-    transform = get_transforms(train=False)
-
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
     cap = cv2.VideoCapture(0)
     ret, frame = cap.read()
@@ -37,36 +32,36 @@ def enroll():
         if not ret:
             break
 
-        cv2.imshow('Enrollment', frame)
+        face_tensor,box,prob=get_face_tensor(frame)
+
+        display = frame.copy()
+
+        if box is not None:
+            x1, y1, x2, y2 = [int(v) for v in box]
+            cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(display, f"Face {prob:.2f}", (x1, max(y1 - 10, 20)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        else:
+            cv2.putText(display, "No face detected", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+        cv2.putText(display, f"Captured {len(embeddings_list)}/10",
+                    (10, display.shape[0] - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+
+        cv2.imshow('Enrollment', display)
         key = cv2.waitKey(1)
 
         if key == ord('q'):
             break
 
         if key == 32:
-            # Detect face with OpenCV
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-            
-            if len(faces) == 0:
+
+            if face_tensor is None:
                 print("No face detected. Try again.")
                 continue
-            
-            # Get the largest face
-            x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
-            
-            # Crop and resize to 112x112
-            face_crop = frame[y:y+h, x:x+w]
-            face_resized = cv2.resize(face_crop, (112, 112))
-            
-            # Convert to RGB and normalize manually (CHANGED THIS PART)
-            rgb = cv2.cvtColor(face_resized, cv2.COLOR_BGR2RGB)
-            
-            # Convert to tensor and normalize to [-1, 1]
-            face_tensor = torch.tensor(rgb.tolist(), dtype=torch.uint8).permute(2, 0, 1).float() / 255.0
-            face_tensor = (face_tensor - 0.5) / 0.5  # Normalize to [-1, 1]
-            face_tensor = face_tensor.unsqueeze(0).to(device)
-            
+            face_tensor = face_tensor.to(device)
             # Get embedding
             with torch.no_grad():
                 emb = model(face_tensor)

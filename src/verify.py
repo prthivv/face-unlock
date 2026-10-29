@@ -5,6 +5,7 @@ import numpy as np
 import torch.nn.functional as F
 
 from models.backbone import Backbone
+from face_utils import get_face_tensor
 
 def verify():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -30,9 +31,6 @@ def verify():
         print("No enrolled templates found. Please run enroll.py first to register a face.")
         return
 
-    # 3. Initialize the face cascade
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
     # 4. Open webcam
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -47,25 +45,13 @@ def verify():
         if not ret:
             break
 
-        # Detect face with OpenCV
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+        face_tensor,box,prob = get_face_tensor(frame)
 
-        if len(faces) > 0:
-            # Get the largest face
-            x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
-            
-            # Crop and resize to 112x112
-            face_crop = frame[y:y+h, x:x+w]
-            face_resized = cv2.resize(face_crop, (112, 112))
-            
-            # Convert to RGB and normalize manually
-            rgb = cv2.cvtColor(face_resized, cv2.COLOR_BGR2RGB)
-            
-            # Convert to tensor and normalize to [-1, 1] using the exact same robust method as enroll.py
-            face_tensor = torch.tensor(rgb.tolist(), dtype=torch.uint8).permute(2, 0, 1).float() / 255.0
-            face_tensor = (face_tensor - 0.5) / 0.5  # Normalize to [-1, 1]
-            face_tensor = face_tensor.unsqueeze(0).to(device)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+
+        if face_tensor is not None:
+
+            face_tensor = face_tensor.to(device)
             
             # Get embedding
             with torch.no_grad():
@@ -92,14 +78,14 @@ def verify():
             else:
                 display_text = f"UNKNOWN ({max_similarity:.2f})"
                 color = (0, 0, 255)  # Red for unknown
+            
+            x1, y1, x2, y2 = [int(v) for v in box]
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(frame, display_text, (x1, max(y1 - 10, 20)), font, 0.8, color, 2, cv2.LINE_AA)
 
-            # Draw a bounding box around the face
-            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
+        else:
+            cv2.putText(frame, "No face detected", (10,30), font, 0.8, (0,0,255), 2, cv2.LINE_AA)
 
-            # 6. Overlay the result on the video frame using cv2.putText()
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            # Place the text slightly above the bounding box
-            cv2.putText(frame, display_text, (x, y - 10), font, 0.8, color, 2, cv2.LINE_AA)
 
         cv2.imshow('Live Verification', frame)
         
